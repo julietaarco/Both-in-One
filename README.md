@@ -175,7 +175,7 @@ This project was conducted as personal artistic research. All data were self-rep
 
 ## License
 
-This project is licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). You are free to share and adapt the material with appropriate attribution.
+This project is licensed under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/legalcode.txt). You are free to share and adapt the material with appropriate attribution.
 
 ---
 
