@@ -35,6 +35,7 @@ The dataset covers a series of hand-drawn and hand-painted works rendered in **p
 | Both in One 2 (BiO2) | ✓ | ✓ | Proxy (training) |
 | Both in One 3 (BiO3) | ✓ | — | Test case |
 | Both in One 4 (BiO4) | ✓ | ✓ | Proxy (training)  |
+| Both in One 5 (BiO5) | ✓ | — | Test case |
 
 BiO2 and BiO4 serve as the **training proxies** — paintings for which both image metrics and self-report data were collected. BiO1 and BiO3 are used as **test cases** to evaluate whether the model built from BiO2/BiO4 can estimate inner states from image metrics alone.
 
