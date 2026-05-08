@@ -1,5 +1,5 @@
 # Both in One
-### Paintings as Epistemic Proxies of Inner States — An Artistic Research Project
+### Artworks as Epistemic Proxies of Inner States — An Artistic Research Project
 
 *By Julieta Arco*
 
