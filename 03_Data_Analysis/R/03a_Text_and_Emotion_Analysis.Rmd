@@ -1,0 +1,380 @@
+---
+title: "Both in One — 03a. Text and Emotion Analysis"
+author: "Julieta Arco"
+date: "`r Sys.Date()`"
+output:
+  html_notebook:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+---
+
+---
+
+### Overview ###
+
+This notebook covers the preparation and analysis of the textual and emotional data collected during the *Both in One* painting process.
+
+**Input files** (located in "here::here("Data")":
+
+- `BiO_form.csv` — personal state variables per stage (exported from Jotform)
+- `BiO_image.csv` — image metrics per stage (exported from Google Colab)
+
+**Analysis steps:**
+
+1. Data loading and preparation
+2. Text preprocessing and word frequency analysis
+3. Emotion analysis (NRC Emotion Lexicon)
+4. Emotion word clouds by category
+
+The combined dataset produced here (`BiO_data.csv`) serves as the input for `03b_Statistical_Analysis.Rmd`.
+
+---
+
+# 1. Data Preparation
+
+```{r, warning=FALSE, message=FALSE}
+# Load libraries
+library(here)
+library(dplyr)
+library(readr)
+library(lubridate)
+library(tidyr)
+library(stringr)
+library(stringi)
+library(tidytext)
+library(stopwords)
+library(ggplot2)
+library(wordcloud)
+library(scales)
+library(syuzhet)
+library(purrr)
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Load data
+# Update file names accordingly
+cat("Working directory:", here::here(), "\n")
+image_data    <- read.csv(here::here("Data", "BiO_image.csv"))
+form_data <- read.csv(here::here("Data", "BiO_form.csv"))
+```
+
+
+```{r}
+# Sort by painting date (oldest to newest) and assign Stage number
+form_df <- form_data %>%
+  mutate(Date = mdy(Date)) %>%        
+  arrange(Date) %>%                      # oldest stage first
+  mutate(Stage = paste0("S", row_number())) 
+
+```
+
+```{r}
+# Free-text reflective notes per stage
+
+notes_data <- form_df %>%
+  dplyr::select(
+    Stage,
+    Body_Notes        = "Body...Energy.Notes",
+    Environment_Notes = "Environment.Notes",
+    Work_Notes        = "Work.Notes",
+    Social_Notes      = "Social.Notes",
+    Intimacy_Notes    = "Intimacy.Notes",
+    Emotion_Notes     = "Emotion.Notes",
+    Leisure_Notes     = "Leisure.Notes",
+    Spiritual_Notes   = "Spiritual.Notes",
+    Growth_Notes      = "Growth.Notes",
+    Creative_Notes    = "Creative.Notes"
+  )
+
+# Export data
+write.csv(notes_data,
+          file      = here::here("Data", "BiO_notes.csv"),
+          row.names = FALSE)
+```
+
+```{r}
+# Numerical personal state variables per stage
+personal_data <- form_df %>%
+  dplyr::select(
+    Stage,
+    Energy                  = "Energy.Level",
+    Day_Structure           = "How.structured.or.chaotic.was.your.day.",
+    Finance_Impact          = "To.what.extent.did.work.or.financial.matters.influence.you.today.",
+    Social_Support          = "How.emotionally.supported.or.connected.did.you.feel.",
+    Sexuality               = "How.connected.did.you.feel.with.your.intimacy.or.sexuality.",
+    Emotional_Balance       = "How.balanced.or.grounded.did.you.feel.emotionally.",
+    Mental_Focus            = "How.mentally.clear.or.focused.were.you.",
+    Emotion_Intensity       = "How.intense.were.your.emotions.today.",
+    Leisure_Time            = "How.much.time.did.you.dedicate.to.leisure.or.rest.",
+    Spiritual_Connection    = "How.connected.did.you.feel.to.your.inner.purpose.or.spirituality.",
+    Personal_Growth         = "How.aligned.did.you.feel.with.your.personal.values.or.growth.",
+    Emotion_In_Painting     = "How.emotionally.present.were.you.while.painting.",
+    Creative_Flow           = "How.strongly.did.you.feel.in.a.state.of.creative.flow.",
+    Artistic_Satisfaction   = "How.satisfied.are.you.with.your.artistic.output.today.",
+    Creative_Intention      = "How.clear.was.your.creative.intention.or.direction."
+  )
+
+# Export data
+write.csv(personal_data,
+          file      = here::here("Data", "BiO_personal.csv"),
+          row.names = FALSE)
+```
+
+
+```{r}
+# Combine all note columns into a single text column per stage
+notes_data$all_Notes <- notes_data %>%
+  dplyr::select(ends_with("_Notes")) %>%
+  apply(1, function(x) paste(na.omit(x), collapse = " "))
+```
+
+---
+
+# 2. Word Frequency Analysis
+
+```{r, warning=FALSE, message=FALSE}
+# Load libraries
+library(stopwords)
+library(tidytext)
+library(stringi)
+library(stringr)
+```
+
+```{r}
+# Preprocess and tokenize
+cleaned_words <- notes_data %>%
+  dplyr::select(Stage = 1, all_Notes) %>%
+  unnest_tokens(word, all_Notes) %>%
+  filter(
+    !word %in% stopwords::stopwords("es"),   # remove Spanish stopwords
+    str_detect(word, "^[a-záéíóúñü]+$")      # keep only alphabetic words
+  ) %>%
+  mutate(word = stri_trans_general(word, "Latin-ASCII"))  # normalize accents
+```
+
+## 2.1 Word Frequency by Stage
+
+```{r, warning=FALSE, message=FALSE}
+# Load library
+library(wordcloud)
+```
+
+```{r, fig.width=5, fig.height=5}
+my_palette <- c("lightgrey", "darkblue", "violet", "purple",
+                "purple3", "steelblue1", "magenta",
+                "darkgrey", "blue")
+
+stages <- unique(cleaned_words$Stage)
+
+for (s in stages) {
+  stage_data <- cleaned_words %>%
+    filter(Stage == s) %>%
+    count(word, sort = TRUE)
+
+  wordcloud(words  = stage_data$word,
+            freq   = stage_data$n,
+            min.freq  = 1,
+            max.words = 10,
+            random.order = TRUE,
+            scale  = c(2, 0.6),
+            colors = my_palette)
+  title(main = paste("Stage", s), cex.main = 1.5)
+}
+```
+
+## 2.2 Overall Word Frequency
+
+```{r, fig.width=6, fig.height=4}
+word_freq <- cleaned_words %>%
+  count(word, sort = TRUE)
+
+# Bar chart — top 20 words
+word_freq %>%
+  slice_max(n, n = 20) %>%
+  ggplot(aes(x = reorder(word, n), y = n)) +
+  geom_col(fill = "magenta") +
+  coord_flip() +
+  labs(x = "Word", y = "Frequency") +
+  theme_minimal()
+```
+
+```{r, fig.width=5, fig.height=5}
+# Word cloud — overall
+wordcloud(words  = word_freq$word,
+          freq   = word_freq$n,
+          max.words = 20,
+          scale  = c(2, 0.6),
+          colors = my_palette)
+title(main = "Overall Word Frequency", cex.main = 1.5)
+```
+
+---
+
+# 3. Emotion Analysis
+
+Emotion scores are computed per stage using the NRC Emotion Lexicon via the `syuzhet` package.
+The lexicon classifies words into eight basic emotions (Joy, Trust, Anticipation, Surprise, Fear, Sadness, Disgust, Anger) and two general sentiments (Positive, Negative).
+
+```{r}
+# Load library
+library(syuzhet)
+```
+
+```{r}
+# Compute NRC emotion scores per stage
+emotion_scores <- get_nrc_sentiment(notes_data$all_Notes, language = "spanish")
+
+# Rename columns
+notes_emotions <- emotion_scores %>%
+  rename(
+    Anger        = anger,
+    Anticipation = anticipation,
+    Disgust      = disgust,
+    Fear         = fear,
+    Joy          = joy,
+    Sadness      = sadness,
+    Surprise     = surprise,
+    Trust        = trust,
+    Negative     = negative,
+    Positive     = positive
+  )
+
+# Set display order
+emotion_order <- c("Joy", "Trust", "Anticipation", "Surprise",
+                   "Fear", "Sadness", "Disgust", "Anger",
+                   "Positive", "Negative")
+
+notes_emotions <- notes_emotions %>%
+  dplyr::select(all_of(emotion_order))
+
+# Combine with stage data
+all_data <- bind_cols(notes_data, notes_emotions)
+```
+
+## 3.1 Overall Emotion Profile
+
+```{r, fig.width=6, fig.height=4}
+# Set colors
+my_colors <- c(
+  "Joy"          = "magenta",
+  "Trust"        = "magenta3",
+  "Anticipation" = "magenta4",
+  "Surprise"     = "purple4",
+  "Fear"         = "steelblue1",
+  "Sadness"      = "steelblue3",
+  "Disgust"      = "blue",
+  "Anger"        = "darkblue",
+  "Positive"     = "grey",
+  "Negative"     = "grey1"
+)
+
+emotion_totals <- colSums(notes_emotions)
+
+# Plot barplot
+par(mar = c(8, 4, 4, 2))
+barplot(emotion_totals,
+        las       = 2,
+        col       = adjustcolor(my_colors, alpha.f = 0.6),
+        cex.names = 0.7,
+        cex.axis  = 0.7,
+        border    = NA,
+        xlab      = "Emotion",
+        ylab      = "Word Frequency",
+        ylim      = c(0, max(emotion_totals) * 1.1),
+        mgp       = c(3, 0.7, 0))
+```
+
+## 3.2 Emotion Trajectory Across Stages
+
+```{r, fig.width=8, fig.height=4}
+# Data format
+emotion_long <- all_data %>%
+  dplyr::select(Stage, all_of(emotion_order)) %>%
+  pivot_longer(-Stage, names_to = "Emotion", values_to = "Score")
+
+emotion_long$Emotion <- factor(emotion_long$Emotion, levels = emotion_order)
+
+# Order stages numerically
+stage_order <- emotion_long %>%
+  distinct(Stage) %>%
+  mutate(stage_num = as.numeric(gsub("[^0-9]", "", Stage))) %>%
+  arrange(stage_num) %>%
+  pull(Stage)
+
+emotion_long$Stage <- factor(emotion_long$Stage, levels = stage_order)
+
+# Plotter Emotions across Stages
+ggplot(emotion_long, aes(x = Stage, y = Score, fill = Emotion)) +
+  geom_col(position = "stack", alpha = 0.6) +
+  scale_fill_manual(values = my_colors) +
+  scale_x_discrete(drop = FALSE) +
+  labs(x = "Stage", y = "Word Frequency") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+
+## 3.3 Emotion Word Clouds
+
+Word clouds per emotion category, showing only words associated with each emotion.
+
+```{r, fig.width=5, fig.height=5}
+# Match words to emotions
+unique_words  <- unique(cleaned_words$word)
+emotion_word  <- get_nrc_sentiment(unique_words, language = "spanish")
+
+emotion_word <- emotion_word %>%
+  mutate(word = unique_words) %>%
+  relocate(word, .before = 1)
+
+emotion_word_long <- emotion_word %>%
+  pivot_longer(cols = -word, names_to = "emotion", values_to = "score") %>%
+  filter(score > 0)
+
+emotions_list <- unique(emotion_word_long$emotion)
+
+for (emo in emotions_list) {
+  emo_words <- emotion_word_long %>%
+    filter(emotion == emo) %>%
+    group_by(word) %>%
+    summarise(freq = sum(score), .groups = "drop") %>%
+    arrange(desc(freq))
+
+# Plot words per emotion  
+  wordcloud(words        = emo_words$word,
+            freq         = emo_words$freq,
+            min.freq     = 1,
+            max.words    = 20,
+            scale        = c(2, 0.6),
+            colors       = my_palette)
+  title(main = paste("Emotion:", emo), cex.main = 1.5)
+}
+```
+
+---
+
+# 4. Combined Dataset
+
+```{r}
+# Join image metrics, personal variables, and emotion scores by Stage
+emotion_data <- all_data %>%
+  dplyr::select(Stage, all_of(emotion_order))
+
+df_stage <- image_data %>%
+  inner_join(personal_data, by = "Stage") %>%
+  inner_join(emotion_data,  by = "Stage")
+
+glimpse(df_stage)
+```
+
+```{r}
+# Export dataset for use in 03b_Statistical_Analysis.Rmd
+write.csv(df_stage,
+          file      = here::here("Data", "BiO_data.csv"),
+          row.names = FALSE)
+```
+
+---
+
+*Both in One — Julieta Arco*

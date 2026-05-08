@@ -1,0 +1,480 @@
+---
+title: "Both in One — 03b. Statistical Analysis"
+author: "Julieta Arco"
+date: "`r Sys.Date()`"
+output:
+  html_notebook:
+    toc: true
+    toc_float: true
+    theme: flatly
+    highlight: tango
+---
+
+---
+
+### Overview ###
+
+This notebook covers the statistical analysis of the *Both in One* dataset, exploring relationships between image metrics, personal state variables, and emotion scores.
+
+**Input file** (produced by `03a_Text_and_Emotion_Analysis.Rmd`):
+
+- `BiO_data.csv` — merged dataset with image metrics, personal variables, and emotion scores per stage
+
+**Analysis steps:**
+
+1. Exploratory Data Analysis (EDA) — distributions and trajectories
+2. Correlation analysis
+3. Hierarchical clustering
+4. Principal Component Analysis (PCA)
+5. Partial Least Squares Regression (PLSR)
+
+---
+
+# 1. Data Preparation
+
+```{r, warning=FALSE, message=FALSE}
+# Load libraries
+library(here)
+library(dplyr)
+library(readr)
+library(tidyr)
+library(ggplot2)
+library(scales)
+library(corrplot)
+library(Hmisc)
+library(pheatmap)
+library(factoextra)
+library(pls)
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Load full dataset
+cat("Working directory:", here::here(), "\n")
+df_stage <- read.csv(here::here("Data", "BiO_data.csv"))
+
+# Separate variable groups for grouped plots
+image_vars    <- c("Stroke_Density_Pct", "Texture_LBP_SD",
+                   "Fractal_Dimension", "Mean_Hue", "Hue_SD")
+emotion_order <- c("Joy", "Trust", "Anticipation", "Surprise",
+                   "Fear", "Sadness", "Disgust", "Anger",
+                   "Positive", "Negative")
+
+# Personal variable names: all columns not in Stage, image_vars, or emotion_order
+personal_vars <- setdiff(names(df_stage),
+                         c("Stage", image_vars, emotion_order))
+
+# All numeric variables for multivariate analysis
+df_variables <- df_stage %>%
+  dplyr::select(-Stage)
+
+# Z-score scaling
+df_variables_z <- as.data.frame(scale(df_variables, center = TRUE, scale = TRUE))
+```
+
+---
+
+# 2. Exploratory Data Analysis
+
+## 2.1 Distributions
+
+### Image Metrics
+
+```{r, fig.width=10, fig.height=3}
+# Define color palette
+color_img <- colorRampPalette(c("purple", "magenta", "magenta4", "blue", "darkblue"))(5)
+
+# Plot boxplot
+df_stage %>%
+  dplyr::select(Stage, all_of(image_vars)) %>%
+  pivot_longer(-Stage, names_to = "Metric", values_to = "Value") %>%
+  ggplot(aes(x = "", y = Value, fill = Metric)) +
+  geom_boxplot(width = 0.4, alpha = 0.6,
+               outlier.shape = 16, outlier.size = 2,
+               color = "black") +
+  scale_fill_manual(values = color_img) +
+  facet_wrap(~Metric, scales = "free", nrow = 1) +
+  labs(x = NULL, y = "Value") +
+  theme_minimal() +
+  theme(
+    axis.text.x  = element_blank(),
+    axis.ticks.x = element_blank(),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor   = element_blank(),
+    legend.position    = "none",
+    strip.text = element_text(face = "bold", size = 10)
+  )
+```
+
+### Personal Variables
+
+```{r, fig.width=10, fig.height=4}
+# Define color palette
+color_pers <- colorRampPalette(c("magenta", "grey", "darkblue"))(length(personal_vars))
+
+# Plot boxplot
+df_stage %>%
+  dplyr::select(Stage, all_of(personal_vars)) %>%
+  pivot_longer(-Stage, names_to = "Variable", values_to = "Score") %>%
+  ggplot(aes(x = Variable, y = Score, fill = Variable)) +
+  geom_boxplot(alpha = 0.6,
+               outlier.shape = 16, outlier.size = 2) +
+  scale_fill_manual(values = color_pers) +
+  scale_y_continuous(breaks = function(x) seq(0, max(x), by = 2)) +
+  labs(x = "Variable", y = "Score") +
+  theme_minimal() +
+  theme(
+    axis.text.x    = element_text(angle = 90, hjust = 1),
+    legend.position = "none"
+  )
+```
+
+### Emotion Scores
+
+```{r, fig.width=8, fig.height=4}
+# Define color for each emotion
+my_colors <- c(
+  "Joy"          = "magenta",
+  "Trust"        = "magenta3",
+  "Anticipation" = "magenta4",
+  "Surprise"     = "purple4",
+  "Fear"         = "steelblue1",
+  "Sadness"      = "steelblue3",
+  "Disgust"      = "blue",
+  "Anger"        = "darkblue",
+  "Positive"     = "grey",
+  "Negative"     = "grey1"
+)
+
+# Plot boxplot
+df_stage %>%
+  dplyr::select(all_of(emotion_order)) %>%
+  pivot_longer(everything(), names_to = "Emotion", values_to = "Score") %>%
+  mutate(Emotion = factor(Emotion, levels = emotion_order)) %>%
+  ggplot(aes(x = Emotion, y = Score, fill = Emotion)) +
+  geom_boxplot(alpha = 0.6,
+               outlier.shape = 16, outlier.size = 2) +
+  scale_fill_manual(values = my_colors) +
+  scale_y_continuous(breaks = function(x) seq(0, max(x), by = 2)) +
+  labs(x = "Emotion", y = "Score") +
+  theme_minimal() +
+  theme(
+    axis.text.x    = element_text(angle = 90, hjust = 1),
+    legend.position = "none"
+  )
+```
+
+## 2.2 Trajectories Across Stages
+
+Metric and variable values plotted across painting stages to visualize temporal evolution.
+
+### Image Metrics
+
+```{r, fig.width=3, fig.height=7}
+# Select variables and change format
+image_long <- df_stage %>%
+  dplyr::select(Stage, all_of(image_vars)) %>%
+  pivot_longer(-Stage, names_to = "Metric", values_to = "Value")
+
+image_long$Stage <- factor(
+  image_long$Stage,
+  levels = paste0("S", sort(as.numeric(gsub("S", "", unique(image_long$Stage)))))
+)
+
+# Plot metrics
+metrics_plot <- ggplot(image_long, aes(x = Stage, y = Value, group = Metric)) +
+  geom_line(color  = "darkblue",  linewidth = 0.7) +
+  geom_point(color = "magenta4",  size = 1.5) +
+  facet_wrap(~Metric, scales = "free_y", ncol = 1) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 4)) +
+  labs(x = "Stage", y = "Value") +
+  theme_minimal(base_size = 11) +
+  theme(
+    panel.background  = element_rect(fill = "white"),
+    panel.spacing     = unit(0.5, "lines"),
+    panel.grid.major  = element_line(color = "gray90", linewidth = 0.3),
+    panel.grid.minor  = element_blank(),
+    strip.text        = element_text(face = "bold"),
+    axis.text.x       = element_text(angle = 90, hjust = 1)
+  )
+
+metrics_plot
+```
+
+### Personal Variables
+
+```{r, fig.width=3, fig.height=15}
+# Change format
+personal_long <- df_stage %>%
+  dplyr::select(Stage, all_of(personal_vars)) %>%
+  pivot_longer(-Stage, names_to = "Variable", values_to = "Value")
+
+personal_long$Stage <- factor(
+  personal_long$Stage,
+  levels = paste0("S", sort(as.numeric(gsub("S", "", unique(personal_long$Stage)))))
+)
+
+# Plot personal variables
+personal_plot <- ggplot(personal_long, aes(x = Stage, y = Value, group = Variable)) +
+  geom_line(color = "darkblue", linewidth = 0.7) +
+  geom_point(color = "magenta4", size = 1.5) +
+  facet_wrap(~Variable, scales = "free_y", ncol = 1) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 3)) +
+  labs(x = "Stage", y = "Value") +
+  theme_minimal(base_size = 10) +
+  theme(
+    panel.background = element_rect(fill = "white"),
+    panel.spacing    = unit(0.8, "lines"),
+    panel.grid.major = element_line(color = "gray90", linewidth = 0.3),
+    panel.grid.minor = element_blank(),
+    strip.text       = element_text(face = "bold", size = 9),
+    axis.text.x      = element_text(angle = 90, hjust = 1, size = 7),
+    axis.text.y      = element_text(size = 7),
+    axis.title       = element_text(size = 9)
+  )
+
+personal_plot
+```
+
+---
+
+# 3. Correlation Analysis
+
+*Pearson correlations* between all variables (image metrics, personal states, emotion scores).
+Significant correlations (p < 0.05) are marked with asterisks.
+
+```{r, warning=FALSE, message=FALSE}
+# Load libraries
+library(Hmisc)
+library(corrplot)
+```
+
+```{r, fig.width=6, fig.height=6}
+# Pearson's Correlations
+cor_results <- rcorr(as.matrix(df_variables), type = "pearson")
+cor_matrix  <- cor_results$r
+p_matrix    <- cor_results$P
+diag(p_matrix) <- 0
+
+# Define color gradient
+color_gradient <- colorRampPalette(c("darkblue", "white", "magenta4"))(100)
+
+# Plot correlations
+corrplot::corrplot(cor_matrix,
+                   method    = "color",
+                   type      = "upper",
+                   col       = color_gradient,
+                   p.mat     = p_matrix,
+                   sig.level = 0.05,
+                   insig     = "label_sig",
+                   pch.cex   = 1,
+                   pch.col   = "black",
+                   tl.col    = "black",
+                   tl.cex    = 0.6,
+                   cl.cex    = 0.6,
+                   mar       = c(0, 0, 2, 0))
+```
+
+---
+
+# 4. Hierarchical Clustering
+
+Variables are clustered based on Euclidean distance (complete linkage) after z-score scaling, revealing groups of co-varying variables across stages.
+
+```{r, warning=FALSE, message=FALSE}
+# Load library
+library(pheatmap)
+```
+
+```{r, fig.width=8, fig.height=5}
+# Define color gradient
+color_heat <- colorRampPalette(c("magenta4", "white", "darkblue"))(15)
+
+# Plot heatmap
+pheatmap(df_variables_z,
+         cluster_rows         = FALSE,
+         cluster_cols         = TRUE,
+         clustering_distance_cols = "euclidean",
+         clustering_method    = "complete",
+         scale                = "none",
+         fontsize_row         = 8,
+         fontsize_col         = 10,
+         color                = color_heat)
+```
+
+```{r, fig.width=8, fig.height=5}
+# Dendrogram of variables
+dist_vars <- dist(t(df_variables_z), method = "euclidean")
+hc_vars   <- hclust(dist_vars, method = "complete")
+
+# Plot dendrogram
+plot(hc_vars, xlab = "", sub = "", cex = 0.8)
+rect.hclust(hc_vars, k = 4,
+            border = c("magenta", "magenta4", "blue", "darkblue"))
+```
+
+---
+
+# 5. Principal Component Analysis (PCA)
+
+*PCA* reduces the dimensionality of the dataset and identifies the main axes of covariation across all variables.
+
+```{r, warning=FALSE, message=FALSE}
+# Load library
+library(factoextra)
+```
+
+```{r }
+# Define color gradient
+color_pca <- colorRampPalette(c("darkblue", "white", "magenta4"))(30)
+
+# PCA Analysis
+pca_result <- prcomp(df_variables, center = TRUE, scale. = TRUE)
+summary(pca_result)
+```
+
+```{r, fig.width=6, fig.height=5, warning=FALSE}
+# Plot PCA with variable contributions
+fviz_pca_var(pca_result,
+             col.var      = "contrib",
+             gradient.cols = color_pca,
+             labelsize    = 2,
+             repel        = TRUE,
+             title        = "PCA — Variable Contributions")
+```
+
+---
+
+# 6. Partial Least Squares Regression (PLSR)
+
+*PLSR* identifies latent components that maximize the shared covariance between image metrics (predictors, X) and state/emotion variables (responses, Y). Model performance is evaluated using leave-one-out cross-validation (LOO-CV).
+
+**Conceptual model:**
+
+> Y [State or Emotion] ~ X [Stroke Density, Texture LBP SD, Fractal Dimension, Mean Hue, Hue SD]
+
+```{r, warning=FALSE, message=FALSE}
+# Load library
+library(pls)
+```
+
+```{r}
+# Define predictors and responses
+# Update response variable names to match the dataset
+predictors_df <- df_variables %>%
+  dplyr::select(all_of(image_vars))
+
+responses_df <- df_variables %>%
+  dplyr::select(all_of(c(personal_vars, emotion_order)))
+
+X <- as.matrix(predictors_df)
+Y <- as.matrix(responses_df)
+```
+
+## 6.1 Component Selection
+
+```{r, fig.width=6, fig.height=4}
+# Fit PLSR with LOO cross-validation across all possible components
+pls_model <- plsr(Y ~ X,
+                  data       = df_variables,
+                  scale      = TRUE,
+                  validation = "LOO")
+
+summary(pls_model)
+
+# Compute mean RMSEP across all responses to determine optimal components
+rmseps_matrix <- RMSEP(pls_model)$val[1, , ]  # dims: components x responses
+rmseps_means  <- colMeans(rmseps_matrix[-1, ]) # remove intercept row
+
+optimal_ncomp <- which.min(rmseps_means)
+cat("Optimal number of components:", optimal_ncomp, "\n")
+
+# Plot mean RMSEP
+plot(seq_along(rmseps_means), rmseps_means,
+     type = "n",
+     xlab = "Number of Components",
+     ylab = "Mean RMSEP",
+     main = "Mean RMSEP Across All Responses")
+grid()
+lines(seq_along(rmseps_means), rmseps_means,
+      type = "b", pch = 19, col = "darkblue", lwd = 2, cex = 1.2)
+abline(h   = min(rmseps_means), col = "magenta4", lty = 2)
+abline(v   = optimal_ncomp,    col = "steelblue1", lty = 2)
+```
+
+## 6.2 Final Model
+
+```{r}
+# Fit final model with optimal number of components
+pls_final <- plsr(Y ~ X,
+                  ncomp      = optimal_ncomp,
+                  data       = df_variables,
+                  scale      = TRUE,
+                  validation = "LOO",
+                  method     = "kernelpls")
+
+summary(pls_final)
+```
+
+## 6.3 Predicted vs. Observed
+
+```{r, fig.width=10, fig.height=8}
+# Cross-validated predictions
+predicted_vals <- predict(pls_final, ncomp = optimal_ncomp, type = "response")
+predicted_vals <- predicted_vals[, , 1]
+pred_df        <- as.data.frame(predicted_vals)
+colnames(pred_df) <- colnames(responses_df)
+
+# Plot predicted vs observed for each response variable
+n_vars <- ncol(responses_df)
+n_cols <- 4
+n_rows <- ceiling(n_vars / n_cols)
+
+par(mfrow = c(n_rows, n_cols), mar = c(3, 3, 2, 1))
+
+for (var in colnames(responses_df)) {
+  plot(responses_df[[var]], pred_df[[var]],
+       xlab = "Observed", ylab = "Predicted",
+       main = var, pch = 16, col = "steelblue1")
+  abline(0, 1, col = "magenta4", lty = 2)
+}
+```
+
+## 6.4 Model Performance (R²)
+
+```{r}
+# R² per response variable (cross-validated)
+r2_values <- sapply(colnames(responses_df), function(var) {
+  obs  <- responses_df[[var]]
+  pred <- pred_df[[var]]
+  ss_res <- sum((obs - pred)^2)
+  ss_tot <- sum((obs - mean(obs))^2)
+  if (ss_tot == 0) return(NA)
+  return(1 - ss_res / ss_tot)
+})
+
+r2_df <- data.frame(
+  Variable = names(r2_values),
+  R2       = round(r2_values, 3)
+) %>%
+  arrange(desc(R2))
+
+print(r2_df)
+```
+
+```{r, fig.width=7, fig.height=5}
+# Bar chart of R² values
+r2_df %>%
+  filter(!is.na(R2)) %>%
+  ggplot(aes(x = reorder(Variable, R2), y = R2)) +
+  geom_col(fill = "steelblue1", alpha = 0.8) +
+  geom_hline(yintercept = 0, color = "black", linewidth = 0.3) +
+  coord_flip() +
+  labs(x = "Response Variable", y = expression(R^2),
+       title = "PLSR Cross-Validated R² per Response Variable") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 11))
+```
+
+---
+
+*Both in One — Julieta Arco*
